@@ -1,0 +1,34 @@
+stages:
+  - lint
+  - test
+  - build
+
+image: erlang:latest
+
+variables:
+  REBAR3_CACHE_DIR: "$CI_PROJECT_DIR/.rebar3_cache"
+
+cache:
+  paths:
+    - .rebar3_cache/
+
+linting:
+  stage: lint
+  script:
+    - rebar3 check
+
+unit_tests:
+  stage: test
+  script:
+    - rebar3 eunit
+  artifacts:
+    when: always
+    expire_in: 1 week
+
+build_project:
+  stage: build
+  script:
+    - rebar3 compile
+  only:
+    - main
+    - master
