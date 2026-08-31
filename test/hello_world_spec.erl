@@ -9,6 +9,6 @@ hello_world_test_() ->
       ?_test(begin
                 Result = hello_world:greet(<<"Tester">>),
                 Data = jiffy:decode(Result, [return_maps]),
-                ?assertEqual(<<"Tester">>, maps:get(name, Data))
+                ?assertEqual(<<"Tester">>, maps:get(<<"name">>, Data))
              end)
      ]}.
