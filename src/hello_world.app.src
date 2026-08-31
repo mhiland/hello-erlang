@@ -1,0 +1,7 @@
+{application, hello_world,
+ [{description, "A hello world project with many dependencies"},
+  {vsn, "0.1.0"},
+  {vsn_first_release, true},
+  {applications, [kernel, erlang, std]},
+  {modules, [hello_world, hello_world_demo]}
+]}.
