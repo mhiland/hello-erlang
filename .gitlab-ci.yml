@@ -6,6 +6,7 @@ stages:
 image: ${DEP_IMAGE_REGISTRY}/library/erlang:latest
 
 variables:
+  DEP_IMAGE_REGISTRY: "dependably.northwardlabs.ca"
   REBAR3_CACHE_DIR: "$CI_PROJECT_DIR/.rebar3_cache"
 
 cache:
