@@ -3,7 +3,7 @@ stages:
   - test
   - build
 
-image: erlang:latest
+image: dependably.northwardlabs.ca/erlang:latest
 
 variables:
   REBAR3_CACHE_DIR: "$CI_PROJECT_DIR/.rebar3_cache"
