@@ -2,8 +2,7 @@
 -export([run/0]).
 
 run() ->
-    logger:add_hdl_device(error_logger),
-    lager:start_link(),
+    lager:start(),
 
     Name = <<"Claude">> ,
     lager:info("Starting Hello World Demo...", []),

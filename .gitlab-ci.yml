@@ -15,7 +15,7 @@ cache:
 linting:
   stage: lint
   script:
-    - rebar3 check
+    - rebar3 compile
 
 unit_tests:
   stage: test

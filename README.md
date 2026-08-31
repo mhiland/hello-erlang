@@ -65,6 +65,3 @@ hello_world_demo:run().
 - `rebar.config`: Project configuration and dependencies
 ```
 
-# Git Commands
-
-I will now initialize the git repository and perform the initial commit.
