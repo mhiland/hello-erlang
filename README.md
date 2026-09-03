@@ -31,24 +31,40 @@ choco install erlang rebar3
 
 ## Getting Started
 
-### 1. Install Dependencies
-Navigate to the project root and run:
+### 1. Configure the private registry
+All Hex packages are pulled from the private dependably registry (`https://dependably.northwardlabs.ca/hex`),
+which `rebar.config` registers under the repo name `dependably`. The registry requires a token,
+which is kept out of the repository. Put yours in rebar3's per-user auth file:
+
 ```bash
-rebar3 fetch
+mkdir -p ~/.config/rebar3
+cat > ~/.config/rebar3/hex.config <<'EOF'
+#{<<"dependably">> => #{repo_key => <<"YOUR_TOKEN">>, api_key => <<"YOUR_TOKEN">>}}.
+EOF
+chmod 600 ~/.config/rebar3/hex.config
 ```
 
-### 2. Compile the Project
+CI writes this file itself from the shared `REGISTRY_URL` / `REGISTRY_KEY` variables.
+
+### 2. Install Dependencies
+Navigate to the project root and run:
+```bash
+rebar3 update
+rebar3 get-deps
+```
+
+### 3. Compile the Project
 ```bash
 rebar3 compile
 ```
 
-### 3. Run Tests
+### 4. Run Tests
 Verify the project is working correctly using the EUnit test suite:
 ```bash
 rebar3 eunit
 ```
 
-### 4. Run the Demo
+### 5. Run the Demo
 You can start an interactive Erlang shell with the project loaded and run the demo module:
 ```bash
 rebar3 shell
