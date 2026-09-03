@@ -1,3 +1,18 @@
+# CI/CD pipeline for hello-erlang
+#
+#   lint   rebar3 compile on every push/MR
+#   test   rebar3 eunit
+#   build  rebar3 compile on the default branch
+#
+# Every Hex package is resolved from the private dependably registry. rebar.config
+# pins the repo URL and the org's signing key; the token comes from the shared
+# dependably CI/CD variables that every project in the group uses:
+#   REGISTRY_URL   private registry base, e.g. https://dependably.northwardlabs.ca/
+#   REGISTRY_KEY   read-only token for that registry (masked)
+# The job HARD-FAILS when either is empty rather than silently falling back to
+# hex.pm, and refuses to run when REGISTRY_URL names a different host than the
+# one pinned in rebar.config, so the key in the repo always matches the registry.
+
 stages:
   - lint
   - test
@@ -7,11 +22,38 @@ image: ${DEP_IMAGE_REGISTRY}/library/erlang:latest
 
 variables:
   DEP_IMAGE_REGISTRY: "dependably.northwardlabs.ca"
-  REBAR3_CACHE_DIR: "$CI_PROJECT_DIR/.rebar3_cache"
+  # rebar3 reads REBAR_CACHE_DIR (not REBAR3_CACHE_DIR); this is where fetched
+  # Hex packages land, so it is what the cache: below keeps between pipelines.
+  REBAR_CACHE_DIR: "$CI_PROJECT_DIR/.rebar3_cache"
 
 cache:
   paths:
     - .rebar3_cache/
+
+# Writes rebar3's per-user Hex auth file from REGISTRY_KEY. rebar3 merges that
+# map onto the repo of the same name in rebar.config, which is how the token
+# stays out of the repository. Mirrors the REGISTRY_URL/REGISTRY_KEY wiring in
+# the other projects' pipelines.
+.registry_setup: &registry_setup |
+  if [ -z "${REGISTRY_URL:-}" ] || [ -z "${REGISTRY_KEY:-}" ]; then
+    echo "ERROR: REGISTRY_URL/REGISTRY_KEY are empty - refusing to resolve Hex packages without the private registry." >&2
+    exit 1
+  fi
+  configured=$(sed -n 's/.*repo_url => <<"\([^"]*\)">>.*/\1/p' rebar.config)
+  expected="${REGISTRY_URL%/}/hex"
+  if [ "$configured" != "$expected" ]; then
+    echo "ERROR: rebar.config pins repo_url $configured but REGISTRY_URL resolves to $expected." >&2
+    exit 1
+  fi
+  mkdir -p "$HOME/.config/rebar3"
+  printf '#{<<"dependably">> => #{repo_key => <<"%s">>, api_key => <<"%s">>}}.\n' \
+    "$REGISTRY_KEY" "$REGISTRY_KEY" > "$HOME/.config/rebar3/hex.config"
+  chmod 600 "$HOME/.config/rebar3/hex.config"
+  rebar3 update
+
+default:
+  before_script:
+    - *registry_setup
 
 linting:
   stage: lint
