@@ -39,6 +39,35 @@ the affected code paths. Do not "fix" these pins without also updating this tabl
 
 `cowlib 2.13.0`, pulled in by that cowboy, carries several advisories of its own.
 
+## SBOM, reachability, and upload to dependably
+
+The CI `sbom` stage runs `rebar3 sbom` for the default, `dev`, and `test` profiles (the
+`rebar3_sbom` plugin), and `scripts/sbom_tool.py` unions the three XML documents into one
+CycloneDX 1.6 JSON SBOM with profile-only packages marked `scope: excluded`. It then enriches
+the SBOM with the advisories the dependably registry already knows for each package and runs
+[sbom-reach](https://gitlab.northwardlabs.ca/moonlitlabs/sbom-reachability) over it to produce
+SARIF. The `publish` stage PUTs the SBOM and the SARIF to dependably's projects plane as
+project `hello-erlang`, version = tag or branch slug.
+
+Two limits to know about:
+
+- sbom-reach has no Hex analyzer, so every SARIF result carries reachability `unknown`.
+  What the SARIF adds over the SBOM is the advisory list and the dev/test scope per finding.
+- The upload needs `DEPENDABLY_SBOM_TOKEN`, a dependably API token with only the
+  `sbom:upload` capability, set as a masked and protected CI/CD variable. The read-only
+  registry key cannot upload.
+
+To reproduce locally (needs `REGISTRY_URL` and `REGISTRY_KEY` in the environment):
+
+```bash
+rebar3 sbom -f -o bom-default.xml
+rebar3 as dev sbom -f -o bom-dev.xml
+rebar3 as test sbom -f -o bom-test.xml
+python3 scripts/sbom_tool.py rebar3 bom-default.xml bom-dev.xml bom-test.xml bom.cdx.json
+python3 scripts/sbom_tool.py enrich bom.cdx.json bom.vulns.cdx.json
+sbom-reach analyze --sbom bom.vulns.cdx.json --src . --fail-on none -o results.sarif
+```
+
 ## Prerequisites
 
 You will need the Erlang runtime and `rebar3` (the Erlang build tool) installed on your machine.
@@ -117,6 +146,7 @@ hello_world_demo:run().
 ## Project Structure
 - `src/`: Source code (`.erl` files)
 - `test/`: Test suites (`.erl` files using EUnit)
-- `rebar.config`: Project configuration and dependencies
+- `rebar.config`: Project configuration, dependencies, profiles, and the `rebar3_sbom` plugin
+- `scripts/sbom_tool.py`: SBOM merge/enrich helper used by CI
 ```
 

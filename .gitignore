@@ -1,1 +1,6 @@
 _build/
+
+# CI sbom stage outputs.
+bom*.xml
+bom*.cdx.json
+results.sarif
