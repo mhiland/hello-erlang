@@ -1,8 +1,11 @@
 # CI/CD pipeline for hello-erlang
 #
-#   lint   rebar3 compile on every push/MR
-#   test   rebar3 eunit
+#   lint   rebar3 compile + rebar3 as dev compile on every push/MR
+#   test   rebar3 eunit (activates the test profile: meck + a local cowboy server)
 #   build  rebar3 compile on the default branch
+#
+# Profile deps (dev: recon, hex_core; test: meck, cowboy) are fetched only when
+# that profile is active, so lint exercises the dev profile explicitly.
 #
 # Every Hex package is resolved from the private dependably registry. rebar.config
 # pins the repo URL and the org's signing key; the token comes from the shared
@@ -59,6 +62,7 @@ linting:
   stage: lint
   script:
     - rebar3 compile
+    - rebar3 as dev compile
 
 unit_tests:
   stage: test

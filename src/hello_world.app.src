@@ -3,5 +3,5 @@
   {vsn, "0.1.0"},
   {vsn_first_release, true},
   {applications, [kernel, stdlib]},
-  {modules, [hello_world, hello_world_demo]}
+  {modules, [hello_world, hello_world_demo, hello_world_http]}
 ]}.
