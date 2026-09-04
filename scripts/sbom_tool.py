@@ -21,13 +21,15 @@ profile as `scope: excluded`, the same signal a Mix SBOM carries.
 
 enrich: sbom-reach's analyze mode reads vulnerabilities embedded in the SBOM
 and does not look any up itself, and the CI runner cannot reach public advisory
-hosts. This asks the dependably registry's own vulnerability report
-(`GET /api/v1/vuln-report?ecosystem=hex&name=...`, readable with the same
-token CI already uses to pull packages) for every Hex component and writes the
-matches as CycloneDX `vulnerabilities[]`. The registry only knows versions it
-has served, which for a project that pulls everything through it is all of
-them.
+hosts. The dependably registry embeds security advisories in the signed Hex
+registry record it serves for every package (`GET /hex/packages/NAME`, the
+same gzip + protobuf document `mix deps.get` and `rebar3` fetch with the same
+token, and what `mix hex.audit` reads), so this decodes those records and
+writes the advisories touching each SBOM component's version as CycloneDX
+`vulnerabilities[]`. The management API's vulnerability report would be
+simpler, but the CI token's role cannot read it (403).
 """
+import gzip
 import json
 import os
 import re
@@ -119,11 +121,93 @@ def rebar3(default_xml, profile_xmls, dst):
     print(f"wrote {len(merged)} components ({excluded} profile-only, scope excluded) -> {dst}")
 
 
-def vuln_report(base, token, name):
-    url = f"{base}/api/v1/vuln-report?ecosystem=hex&limit=200&name={urllib.parse.quote(name)}"
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
+# --- minimal protobuf reader for the Hex registry `Signed`/`Package` messages ---
+# Field numbers follow hexpm's registry proto (and dependably's HexRegistryCodec):
+#   Signed   { 1 payload }
+#   Package  { 1 releases (Release), 2 name, 3 repository, 4 advisories (SecurityAdvisory) }
+#   Release  { 1 version, ..., 6 advisory_indexes (uint32, repeated, into Package.advisories) }
+#   SecurityAdvisory { 1 id, 2 summary, 3 html_url, 4 severity (0 none..4 critical),
+#                      5 cvss_score (float), 6 api_url, 7 aliases (repeated string) }
+
+SEVERITIES = {0: "none", 1: "low", 2: "medium", 3: "high", 4: "critical"}
+
+
+def _varint(b, i):
+    shift = value = 0
+    while True:
+        c = b[i]
+        i += 1
+        value |= (c & 0x7F) << shift
+        if not c & 0x80:
+            return value, i
+        shift += 7
+
+
+def fields(b):
+    """Yield (field_number, wire_type, value) for one protobuf message."""
+    import struct
+    i = 0
+    while i < len(b):
+        tag, i = _varint(b, i)
+        num, wire = tag >> 3, tag & 7
+        if wire == 0:
+            v, i = _varint(b, i)
+        elif wire == 1:
+            v, i = struct.unpack_from("<d", b, i)[0], i + 8
+        elif wire == 2:
+            n, i = _varint(b, i)
+            v, i = b[i:i + n], i + n
+        elif wire == 5:
+            v, i = struct.unpack_from("<f", b, i)[0], i + 4
+        else:
+            raise ValueError(f"unsupported wire type {wire}")
+        yield num, wire, v
+
+
+def packed_or_single(wire, v):
+    if wire == 2:
+        out, i = [], 0
+        while i < len(v):
+            x, i = _varint(v, i)
+            out.append(x)
+        return out
+    return [v]
+
+
+def decode_advisory(b):
+    adv = {"aliases": []}
+    for num, wire, v in fields(b):
+        if num == 1: adv["id"] = v.decode()
+        elif num == 2: adv["summary"] = v.decode()
+        elif num == 3: adv["html_url"] = v.decode()
+        elif num == 4: adv["severity"] = SEVERITIES.get(v, "unknown")
+        elif num == 5: adv["score"] = round(v, 1)
+        elif num == 6: adv["api_url"] = v.decode()
+        elif num == 7: adv["aliases"].append(v.decode())
+    return adv
+
+
+def decode_package(signed_gz):
+    raw = gzip.decompress(signed_gz) if signed_gz[:2] == b"\x1f\x8b" else signed_gz
+    payload = next(v for num, wire, v in fields(raw) if num == 1 and wire == 2)
+    advisories, releases = [], {}
+    for num, wire, v in fields(payload):
+        if num == 4 and wire == 2:
+            advisories.append(decode_advisory(v))
+        elif num == 1 and wire == 2:
+            version, idx = None, []
+            for n2, w2, v2 in fields(v):
+                if n2 == 1 and w2 == 2: version = v2.decode()
+                elif n2 == 6: idx.extend(packed_or_single(w2, v2))
+            releases[version] = idx
+    return advisories, releases
+
+
+def registry_record(base, token, name):
+    url = f"{base}/hex/packages/{urllib.parse.quote(name)}"
+    req = urllib.request.Request(url, headers={"Authorization": token, "Accept": "application/octet-stream"})
     with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.load(resp).get("items", [])
+        return resp.read()
 
 
 def enrich(src, dst):
@@ -140,28 +224,34 @@ def enrich(src, dst):
     vulns = {}
     for name in sorted(refs):
         try:
-            items = vuln_report(base, token, name)
+            advisories, releases = decode_package(registry_record(base, token, name))
         except urllib.error.HTTPError as e:
-            sys.exit(f"enrich: {name}: HTTP {e.code} from {base}")
-        for it in items:
-            ref = refs[name].get(it.get("version"))
-            if not ref or it.get("revokedAt"):
-                continue
-            v = vulns.setdefault(it["osvId"], {
-                "id": it["osvId"],
-                "source": {"name": "dependably", "url": f"{base}/api/v1/vulnerabilities/{it['osvId']}"},
-                "description": it.get("summary") or "",
-                "published": it.get("publishedAt"),
-                "ratings": [{
-                    "severity": (it.get("severity") or "unknown").lower(),
-                    "score": it.get("cvssScore"),
-                    "method": "other",
-                    "source": {"name": "dependably"},
-                }],
-                "affects": [],
-            })
-            if not any(a["ref"] == ref for a in v["affects"]):
-                v["affects"].append({"ref": ref})
+            sys.exit(f"enrich: {name}: HTTP {e.code} from {base}/hex/packages/{name}")
+        for version, ref in refs[name].items():
+            for i in releases.get(version, []):
+                if i >= len(advisories) or "id" not in advisories[i]:
+                    continue
+                a = advisories[i]
+                v = vulns.setdefault(a["id"], {
+                    "id": a["id"],
+                    "source": {"name": "dependably", "url": a.get("html_url") or f"{base}/hex/packages/{name}"},
+                    "references": [{"id": alias, "source": {"name": "aliases"}} for alias in a["aliases"]],
+                    "description": a.get("summary", ""),
+                    "ratings": [{
+                        "severity": a.get("severity", "unknown"),
+                        "score": a.get("score"),
+                        "method": "other",
+                        "source": {"name": "dependably"},
+                    }],
+                    "affects": [],
+                })
+                if not any(x["ref"] == ref for x in v["affects"]):
+                    v["affects"].append({"ref": ref})
+    for v in vulns.values():
+        if not v["references"]:
+            del v["references"]
+        if v["ratings"][0]["score"] is None:
+            del v["ratings"][0]["score"]
     doc["vulnerabilities"] = sorted(vulns.values(), key=lambda v: v["id"])
     save(doc, dst)
     affected = {a["ref"] for v in vulns.values() for a in v["affects"]}
