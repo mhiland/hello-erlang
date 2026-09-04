@@ -2,7 +2,7 @@
 #
 #   lint   rebar3 compile + rebar3 as dev compile on every push/MR
 #   test   rebar3 eunit (activates the test profile: meck + a local cowboy server)
-#   build  rebar3 compile on the default branch
+#   build  rebar3 compile on every push/MR
 #
 # Profile deps (dev: recon, hex_core; test: meck, cowboy) are fetched only when
 # that profile is active, so lint exercises the dev profile explicitly.
@@ -76,6 +76,3 @@ build_project:
   stage: build
   script:
     - rebar3 compile
-  only:
-    - main
-    - master
